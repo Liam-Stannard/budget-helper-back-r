@@ -45,13 +45,17 @@ pub async fn run(pool: &MySqlPool) -> Result<(), AppError> {
     )
     .await?;
 
-    let checking = account::repository::create(pool, "Checking", demo_user.id).await?;
-    let savings = account::repository::create(pool, "Savings", demo_user.id).await?;
-    let credit_card = account::repository::create(pool, "Credit Card", demo_user.id).await?;
+    let checking =
+        account::repository::create(pool, "Checking", dec!(2000.00), demo_user.id).await?;
+    let savings =
+        account::repository::create(pool, "Savings", dec!(5000.00), demo_user.id).await?;
+    let credit_card =
+        account::repository::create(pool, "Credit Card", dec!(0.00), demo_user.id).await?;
 
     let today = Utc::now().date_naive();
 
     let seed_transactions: &[(i64, TransactionCategory, &str, rust_decimal::Decimal, i64)] = &[
+        (checking.id, TransactionCategory::Income, "Paycheck", dec!(3200.00), 12),
         (checking.id, TransactionCategory::Bill, "Electricity bill", dec!(84.32), 2),
         (checking.id, TransactionCategory::Bill, "Internet bill", dec!(59.99), 5),
         (checking.id, TransactionCategory::Food, "Grocery run", dec!(112.47), 3),

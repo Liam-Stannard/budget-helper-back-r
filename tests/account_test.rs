@@ -14,11 +14,16 @@ use serde_json::json;
 
 // Deliberately doesn't deny unknown fields: the wire object also carries `user_id`, which
 // `IAccount` on the frontend doesn't declare but tolerates as an extra field. What matters is
-// that `id`/`name` are present — that's the part a client actually depends on.
+// that `id`/`name`/`startingBalance`/`currentBalance` are present — that's the part a client
+// actually depends on.
 #[derive(Deserialize)]
 struct AccountContract {
     id: i64,
     name: String,
+    #[serde(rename = "startingBalance")]
+    starting_balance: String,
+    #[serde(rename = "currentBalance")]
+    current_balance: String,
 }
 
 #[derive(Deserialize)]
@@ -47,6 +52,141 @@ async fn create_account_returns_the_wrapped_created_account() {
     let body: AccountResponseContract = response.body_as();
     assert_eq!(body.account.name, "Checking");
     assert!(body.account.id > 0);
+    // No startingBalance was sent, so both default to zero.
+    assert_eq!(body.account.starting_balance, "0.0000");
+    assert_eq!(body.account.current_balance, "0.0000");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn create_account_with_a_starting_balance_returns_it_as_the_current_balance() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "acc-starting-balance").await;
+
+    let response = app
+        .post(
+            "/api/v1/account",
+            Some(&token),
+            json!({ "name": "Checking", "startingBalance": "500.00" }),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: AccountResponseContract = response.body_as();
+    assert_eq!(body.account.starting_balance, "500.0000");
+    // No transactions yet, so current == starting.
+    assert_eq!(body.account.current_balance, "500.0000");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn current_balance_reflects_income_and_expense_transactions() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "acc-balance-tx").await;
+    let created = app
+        .post("/api/v1/account", Some(&token), json!({ "name": "Checking" }))
+        .await;
+    let account_id = created.json["account"]["id"].as_i64().unwrap();
+
+    app.put(
+        &format!("/api/v1/account/id/{account_id}"),
+        Some(&token),
+        json!({ "name": "Checking", "startingBalance": "1000.00" }),
+    )
+    .await;
+
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "INCOME", "title": "Paycheck", "amount": "300.00",
+            "date": "2026-03-01", "account": { "id": account_id },
+        }),
+    )
+    .await;
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Groceries", "amount": "50.00",
+            "date": "2026-03-02", "account": { "id": account_id },
+        }),
+    )
+    .await;
+
+    let response = app
+        .get(&format!("/api/v1/account/id/{account_id}"), Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: AccountResponseContract = response.body_as();
+    // 1000 starting + 300 income - 50 expense
+    assert_eq!(body.account.current_balance, "1250.0000");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn current_balance_moves_with_a_transaction_reassigned_to_another_account() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "acc-balance-reassign").await;
+    let created_a = app
+        .post("/api/v1/account", Some(&token), json!({ "name": "Account A" }))
+        .await;
+    let account_a = created_a.json["account"]["id"].as_i64().unwrap();
+    let created_b = app
+        .post("/api/v1/account", Some(&token), json!({ "name": "Account B" }))
+        .await;
+    let account_b = created_b.json["account"]["id"].as_i64().unwrap();
+
+    let created = app
+        .post(
+            "/api/v1/transaction",
+            Some(&token),
+            json!({
+                "category": "FOOD", "title": "Groceries", "amount": "40.00",
+                "date": "2026-03-01", "account": { "id": account_a },
+            }),
+        )
+        .await;
+    let transaction_id = created.json["transaction"]["id"].as_i64().unwrap();
+
+    let before_a: AccountResponseContract = app
+        .get(&format!("/api/v1/account/id/{account_a}"), Some(&token))
+        .await
+        .body_as();
+    let before_b: AccountResponseContract = app
+        .get(&format!("/api/v1/account/id/{account_b}"), Some(&token))
+        .await
+        .body_as();
+    assert_eq!(before_a.account.current_balance, "-40.0000");
+    assert_eq!(before_b.account.current_balance, "0.0000");
+
+    app.put(
+        &format!("/api/v1/transaction/id/{transaction_id}"),
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Groceries", "amount": "40.00",
+            "date": "2026-03-01", "account": { "id": account_b },
+        }),
+    )
+    .await;
+
+    let after_a: AccountResponseContract = app
+        .get(&format!("/api/v1/account/id/{account_a}"), Some(&token))
+        .await
+        .body_as();
+    let after_b: AccountResponseContract = app
+        .get(&format!("/api/v1/account/id/{account_b}"), Some(&token))
+        .await
+        .body_as();
+    assert_eq!(
+        after_a.account.current_balance, "0.0000",
+        "balance should follow the transaction, not stay stuck on the old account"
+    );
+    assert_eq!(after_b.account.current_balance, "-40.0000");
 
     app.cleanup().await;
 }

@@ -20,7 +20,13 @@ pub async fn create(
     CurrentUser(user): CurrentUser,
     Json(payload): Json<AccountRequest>,
 ) -> Result<Json<AccountResponse>, AppError> {
-    let account = repository::create(&state.db, &payload.name, user.id).await?;
+    let account = repository::create(
+        &state.db,
+        &payload.name,
+        payload.starting_balance,
+        user.id,
+    )
+    .await?;
     Ok(Json(AccountResponse { account }))
 }
 
@@ -39,7 +45,14 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(payload): Json<AccountRequest>,
 ) -> Result<Json<AccountResponse>, AppError> {
-    let account = repository::update(&state.db, id, user.id, &payload.name).await?;
+    let account = repository::update(
+        &state.db,
+        id,
+        user.id,
+        &payload.name,
+        payload.starting_balance,
+    )
+    .await?;
     Ok(Json(AccountResponse { account }))
 }
 

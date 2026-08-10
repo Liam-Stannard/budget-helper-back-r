@@ -19,6 +19,10 @@ pub enum TransactionCategory {
     Bill,
     Subscription,
     Clothing,
+    // Not a spending category like the others — see `repository::SELECT_FIELDS_WITH_BALANCE`
+    // in the account domain, where it's the one category that credits an account's balance
+    // instead of debiting it.
+    Income,
 }
 
 impl TransactionCategory {
@@ -28,6 +32,7 @@ impl TransactionCategory {
             TransactionCategory::Bill => "BILL",
             TransactionCategory::Subscription => "SUBSCRIPTION",
             TransactionCategory::Clothing => "CLOTHING",
+            TransactionCategory::Income => "INCOME",
         }
     }
 }
@@ -41,6 +46,7 @@ impl FromStr for TransactionCategory {
             "BILL" => Ok(TransactionCategory::Bill),
             "SUBSCRIPTION" => Ok(TransactionCategory::Subscription),
             "CLOTHING" => Ok(TransactionCategory::Clothing),
+            "INCOME" => Ok(TransactionCategory::Income),
             other => Err(format!("unknown transaction category: {other}")),
         }
     }

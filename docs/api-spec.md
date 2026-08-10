@@ -133,30 +133,50 @@ types in `modules/account/shared/account.interface.ts`.
 
 Response `200 OK`:
 ```json
-{ "accountList": [ { "id": 1, "name": "Checking" }, ... ] }
+{
+  "accountList": [
+    {
+      "id": 1,
+      "name": "Checking",
+      "startingBalance": "500.0000",
+      "currentBalance": "1250.0000"
+    }
+  ]
+}
 ```
-Matches `IGetAccountListResponse`. Note: the wire object also carries `user_id` at the Rust
-struct level (`Account.user_id`, not `#[serde(skip_serializing)]`) — it IS present in the JSON
-even though `IAccount` on the frontend doesn't declare it. Tests should tolerate its presence
-(extra field, not `deny_unknown_fields` on this one) rather than assert it away, since removing
-it is a separate decision from the scope of this spec.
+Matches `IGetAccountListResponse` **for `id`/`name`**; `startingBalance`/`currentBalance` are
+new and not yet declared on `IAccount` — same kind of tracked gap as the transaction list's
+`totalElements`/`totalPages` above, until the frontend catches up. `currentBalance` is
+**computed on every read**, never stored: `startingBalance` plus every transaction against the
+account, where `category: "INCOME"` credits and every other category debits (see
+`src/domain/account/repository.rs::SELECT_FIELDS_WITH_BALANCE`). Both are decimal strings at
+the same `DECIMAL(19,4)` scale `amount` uses elsewhere. Note: the wire object also carries
+`user_id` at the Rust struct level (`AccountDto.user_id`, not `#[serde(skip_serializing)]`) — it
+IS present in the JSON even though `IAccount` on the frontend doesn't declare it. Tests should
+tolerate its presence (extra field, not `deny_unknown_fields` on this one) rather than assert it
+away, since removing it is a separate decision from the scope of this spec.
 
 ### `POST /api/v1/account`
 
-Request: `{ "name": "string" }` (matches `IAccount` sans `id`).
+Request: `{ "name": "string", "startingBalance": "string" }`. `startingBalance` is optional and
+defaults to `"0.0000"` if omitted (`#[serde(default)]`), so existing callers sending only `name`
+still work.
 
-Response `200 OK`: `{ "account": { "id": 1, "name": "string", "user_id": 1 } }`, matching
-`IPostPutAccountResponse` (plus the same extra `user_id` noted above).
+Response `200 OK`: `{ "account": { "id": 1, "name": "string", "user_id": 1, "startingBalance": "...", "currentBalance": "..." } }`,
+matching `IPostPutAccountResponse` (plus the extra `user_id`/new-fields notes above).
 
 ### `GET /api/v1/account/id/{id}`
 
-Response `200 OK`: `{ "account": { "id": ..., "name": ..., "user_id": ... } }`
+Response `200 OK`: `{ "account": { "id": ..., "name": ..., "user_id": ..., "startingBalance": ..., "currentBalance": ... } }`
 (`IGetAccountResponse`).
 Errors: `404` if the account doesn't exist or belongs to another user.
 
 ### `PUT /api/v1/account/id/{id}`
 
-Request: `{ "name": "string" }`.
+Request: `{ "name": "string", "startingBalance": "string" }`. This is a full replace, same as
+every other `PUT` in this API — omitting `startingBalance` resets it to `0`, it does not leave
+the existing value untouched. A client editing just the name must resend the account's current
+`startingBalance` too.
 Response `200 OK`: `{ "account": { ... } }` (`IPostPutAccountResponse`).
 Errors: `404` if the account doesn't exist or belongs to another user.
 
@@ -197,7 +217,7 @@ Response `200 OK`:
   "transactionList": [
     {
       "id": 1,
-      "category": "FOOD" | "BILL" | "SUBSCRIPTION" | "CLOTHING",
+      "category": "FOOD" | "BILL" | "SUBSCRIPTION" | "CLOTHING" | "INCOME",
       "title": "string",
       "amount": "84.32",
       "date": "2026-08-08",
@@ -226,7 +246,7 @@ going in.
 Request:
 ```json
 {
-  "category": "FOOD" | "BILL" | "SUBSCRIPTION" | "CLOTHING",
+  "category": "FOOD" | "BILL" | "SUBSCRIPTION" | "CLOTHING" | "INCOME",
   "title": "string",
   "amount": "12.34",
   "date": "2026-08-08",
@@ -332,6 +352,12 @@ Response `200 OK`, empty body. Errors: `404` if no user with that ID exists.
    them or reads the new response fields. Not a wire-format break (unknown JSON fields are
    harmless to an untyped consumer) — just unfinished, tracked here until the frontend half of
    this change lands.
+4. **Account `startingBalance`/`currentBalance` aren't in `IAccount` yet, and `"INCOME"` isn't
+   in the frontend's `Category` union.** The account create/edit form only sends `{ "name" }`
+   today (`startingBalance` defaults to `0`, per the endpoint docs above), the account list
+   doesn't display a balance column, and the transaction category dropdown can't produce
+   `"INCOME"` — so nothing on the frontend can currently push a balance away from
+   `-Σ(expenses)`. Backend-complete, frontend-pending, same pattern as gap 3.
 
 ## Bootstrapping the first admin
 
