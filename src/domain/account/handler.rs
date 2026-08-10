@@ -1,38 +1,52 @@
 use axum::{extract::Path, extract::State, Json};
 
-use crate::{error::AppError, state::AppState};
+use crate::{error::AppError, extractors::CurrentUser, state::AppState};
 
-use super::model::{Account, AccountListResponse, AccountResponse};
+use super::{
+    model::{Account, AccountListResponse, AccountResponse},
+    repository,
+};
 
-pub async fn list(State(_state): State<AppState>) -> Result<Json<AccountListResponse>, AppError> {
-    Err(AppError::NotImplemented)
+pub async fn list(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<AccountListResponse>, AppError> {
+    let account_list = repository::find_all_for_user(&state.db, user.id).await?;
+    Ok(Json(AccountListResponse { account_list }))
 }
 
 pub async fn create(
-    State(_state): State<AppState>,
-    Json(_payload): Json<Account>,
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(payload): Json<Account>,
 ) -> Result<(), AppError> {
-    Err(AppError::NotImplemented)
+    repository::create(&state.db, &payload.name, user.id).await?;
+    Ok(())
 }
 
 pub async fn get_by_id(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
 ) -> Result<Json<AccountResponse>, AppError> {
-    Err(AppError::NotImplemented)
+    let account = repository::find_by_id_for_user(&state.db, id, user.id).await?;
+    Ok(Json(AccountResponse { account }))
 }
 
 pub async fn update(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
-    Json(_payload): Json<Account>,
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
+    Json(payload): Json<Account>,
 ) -> Result<(), AppError> {
-    Err(AppError::NotImplemented)
+    repository::update(&state.db, id, user.id, &payload.name).await?;
+    Ok(())
 }
 
 pub async fn delete(
-    State(_state): State<AppState>,
-    Path(_id): Path<i64>,
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<i64>,
 ) -> Result<(), AppError> {
-    Err(AppError::NotImplemented)
+    repository::delete(&state.db, id, user.id).await
 }

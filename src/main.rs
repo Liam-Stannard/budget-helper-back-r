@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod domain;
 mod error;
+mod extractors;
 mod middleware;
 mod state;
 

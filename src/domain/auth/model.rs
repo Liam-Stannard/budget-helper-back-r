@@ -27,4 +27,9 @@ pub struct Claims {
     pub sub: String,
     pub exp: usize,
     pub iat: usize,
+    /// Random per-token identifier. `iat`/`exp` alone only have second resolution, so two
+    /// tokens minted for the same user within the same second would otherwise be byte-identical
+    /// — this keeps every issued token's string unique so the `token` table's revocation state
+    /// per row stays unambiguous.
+    pub jti: String,
 }
