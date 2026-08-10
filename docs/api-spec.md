@@ -313,21 +313,23 @@ Response `200 OK`, empty body. Errors: `404` if no user with that ID exists.
 
 Since `register` can never produce a `ROLE_ADMIN` account (gap 2 above) and `/api/v1/users` is
 itself admin-gated, `bootstrap_admin::run` (`src/bootstrap_admin.rs`) runs once on every
-startup, right after migrations and before `dev_seed`:
+startup, right after migrations and before `dev_seed`, in every profile:
 
 - If any `ROLE_ADMIN` row already exists, it's a no-op. This makes it safe to leave
-  `BOOTSTRAP_ADMIN_*` set in the environment permanently — it only ever does anything on a
-  deployment's first run.
-- Otherwise, if `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_EMAIL`, and
-  `BOOTSTRAP_ADMIN_PASSWORD` are all set (see `.env.example`), it creates that admin.
+  `bootstrap_admin_*` set permanently — it only ever does anything on a fresh database's
+  first run.
+- Otherwise, if `bootstrap_admin_username`, `bootstrap_admin_email`, and
+  `bootstrap_admin_password` are all set, it creates that admin.
 - If none of the three are set, it logs a warning and continues — the app still starts, but
   `/api/v1/users` is unreachable until an admin exists by some other means.
 - If only some of the three are set, or the username/email collides with an existing
   non-admin account, it logs a warning and skips rather than failing startup or silently
   promoting an unrelated account.
 
-There is deliberately no default admin/password shipped in `.env.example` — bootstrapping is
-opt-in per deployment.
+There is deliberately no default admin/password shipped in `config/application-dev.yaml` —
+bootstrapping is opt-in even within dev. In production, `bootstrap_admin_*` is written into
+the gitignored `config/application-prod.yaml` by the deployment process (e.g. pulled from a
+secrets manager) rather than committed — see `config/application-prod.yaml.example`.
 
 ## What this spec does *not* cover
 

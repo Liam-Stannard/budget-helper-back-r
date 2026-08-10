@@ -13,8 +13,9 @@
 //! ever asserted on the JSON shape actually sent over the wire.
 //!
 //! Requires a reachable MariaDB/MySQL server (see `start.sh`); reads connection details from
-//! `DATABASE_URL` (via `.env` or the environment), falling back to the same default as
-//! `.env.example`.
+//! the same layered YAML config the app itself loads (`config/application.yaml` overlaid by
+//! `config/application-${APP_ENV}.yaml`, defaulting to the `dev` profile — see
+//! `src/config.rs`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -66,10 +67,7 @@ impl TestResponse {
 
 impl TestApp {
     pub async fn spawn() -> Self {
-        dotenvy::dotenv().ok();
-
-        let base_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "mysql://root:root@localhost:3306/budget_helper_back_r".into());
+        let base_url = Config::load().database_url;
         let admin_url = base_url
             .rsplit_once('/')
             .map(|(prefix, _)| prefix.to_string())
@@ -87,7 +85,7 @@ impl TestApp {
             .await
             .expect(
                 "could not connect to local MySQL/MariaDB — is it running? see start.sh, \
-                 and check DATABASE_URL in .env",
+                 and check database_url in config/application-dev.yaml",
             );
 
         admin_pool
@@ -114,6 +112,7 @@ impl TestApp {
             jwt_access_token_expiration_seconds: 3600,
             jwt_refresh_token_expiration_seconds: 3600,
             seed_dev_data: false,
+            profile: "test".to_string(),
             bootstrap_admin_username: None,
             bootstrap_admin_email: None,
             bootstrap_admin_password: None,

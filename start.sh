@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Starts budget-helper-back-r for local development: ensures .env exists,
-# ensures the target database exists on an already-running MariaDB/MySQL
-# server, then runs the app (which applies migrations itself on startup).
+# Starts budget-helper-back-r for local development: ensures the target
+# database exists on an already-running MariaDB/MySQL server, then runs the
+# app (which applies migrations itself on startup). Config comes from
+# config/application.yaml overlaid by config/application-${APP_ENV}.yaml
+# (APP_ENV defaults to "dev" here — see src/config.rs).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -21,17 +23,19 @@ else
     exit 1
 fi
 
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "note: created .env from .env.example — review JWT_SECRET before using this beyond local dev"
+export APP_ENV="${APP_ENV:-dev}"
+
+DATABASE_URL=$(grep -h '^database_url:' config/application.yaml "config/application-${APP_ENV}.yaml" 2>/dev/null \
+    | tail -n1 \
+    | sed -E 's/^database_url:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/')
+
+if [ -z "$DATABASE_URL" ]; then
+    echo "error: no database_url found in config/application.yaml or config/application-${APP_ENV}.yaml" >&2
+    exit 1
 fi
 
-set -a
-source .env
-set +a
-
 if [[ ! "$DATABASE_URL" =~ ^mysql://([^:]+):([^@]+)@([^:]+):([0-9]+)/(.+)$ ]]; then
-    echo "error: DATABASE_URL is not in the expected mysql://user:pass@host:port/dbname format" >&2
+    echo "error: database_url is not in the expected mysql://user:pass@host:port/dbname format" >&2
     exit 1
 fi
 DB_USER="${BASH_REMATCH[1]}"

@@ -1,0 +1,14 @@
+# Base configuration, shared by every profile. Overlaid by
+# config/application-${APP_ENV}.yaml (APP_ENV defaults to "dev" — see
+# src/config.rs). Deliberately holds no secrets: those live in the
+# profile-specific files (application-dev.yaml, which is committed since it
+# has nothing real to protect, and application-prod.yaml, which is
+# gitignored — see application-prod.yaml.example).
+
+host: "0.0.0.0"
+port: 8080
+
+jwt_access_token_expiration_seconds: 86400
+jwt_refresh_token_expiration_seconds: 604800
+
+seed_dev_data: false

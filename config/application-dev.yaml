@@ -1,0 +1,23 @@
+# Local development overlay for application.yaml. Committed: nothing here
+# is a real secret, and it's never loaded outside APP_ENV=dev (the default).
+
+# MariaDB/MySQL (see start.sh, which creates this database if it doesn't exist).
+database_url: "mysql://root:root@localhost:3306/budget_helper_back_r"
+
+# Raw secret bytes (not base64/hex encoded), 32+ bytes. Fine as a placeholder
+# for local dev; production supplies its own in application-prod.yaml.
+jwt_secret: "change-this-to-a-long-random-string-at-least-32-bytes-long"
+
+# Seeds a demo user (demo / password123) with a few accounts and transactions
+# on startup, unless that user already exists. Never enable this outside dev.
+seed_dev_data: true
+
+# Bootstraps the first ROLE_ADMIN account on startup — required to ever use
+# /api/v1/users, since registration can only create ROLE_USER accounts and
+# those endpoints are admin-only. All three must be set together; leave
+# commented out (the default) to skip bootstrapping. Only ever honored in the
+# dev profile (see main.rs) — production gets its first admin by inserting a
+# row into the `user` table directly, not through this config.
+# bootstrap_admin_username: admin
+# bootstrap_admin_email: admin@example.com
+# bootstrap_admin_password: change-this-to-a-real-password

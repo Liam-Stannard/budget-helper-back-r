@@ -1,6 +1,9 @@
 use std::env;
 
-#[derive(Clone, Debug)]
+use config::{Config as ConfigLoader, File, FileFormat};
+use serde::Deserialize;
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub host: String,
     pub port: u16,
@@ -9,41 +12,40 @@ pub struct Config {
     pub jwt_access_token_expiration_seconds: i64,
     pub jwt_refresh_token_expiration_seconds: i64,
     pub seed_dev_data: bool,
+    /// Which profile this was loaded from (`dev`, `prod`, ...) — see `load`. Not read from
+    /// YAML itself; filled in after deserialization from `APP_ENV`.
+    #[serde(default)]
+    pub profile: String,
     /// All three (username/email/password) must be set together to bootstrap the first admin
-    /// account on startup — see `bootstrap_admin.rs`. Unset by default: there's no predictable
-    /// default admin/password shipped, so an operator has to deliberately opt in.
+    /// account on startup — see `bootstrap_admin.rs`. Only ever honored in the `dev` profile
+    /// (see `main.rs`); a production admin is inserted directly into the database instead.
     pub bootstrap_admin_username: Option<String>,
     pub bootstrap_admin_email: Option<String>,
     pub bootstrap_admin_password: Option<String>,
 }
 
 impl Config {
-    pub fn from_env() -> Self {
-        Self {
-            host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            port: env::var("PORT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(8080),
-            database_url: env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
-            jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
-            jwt_access_token_expiration_seconds: env::var("JWT_ACCESS_TOKEN_EXPIRATION_SECONDS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(86400),
-            jwt_refresh_token_expiration_seconds: env::var(
-                "JWT_REFRESH_TOKEN_EXPIRATION_SECONDS",
+    /// Loads layered YAML config: `config/application.yaml` (base, always required) overlaid
+    /// by `config/application-{APP_ENV}.yaml` (profile-specific, optional — later keys win),
+    /// where `APP_ENV` defaults to `dev`. Production supplies its own `config/
+    /// application-prod.yaml` (gitignored; see `application-prod.yaml.example`) rather than
+    /// committing secrets.
+    pub fn load() -> Self {
+        let profile = env::var("APP_ENV").unwrap_or_else(|_| "dev".to_string());
+
+        let raw = ConfigLoader::builder()
+            .add_source(File::new("config/application.yaml", FileFormat::Yaml))
+            .add_source(
+                File::new(&format!("config/application-{profile}.yaml"), FileFormat::Yaml)
+                    .required(false),
             )
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(604800),
-            seed_dev_data: env::var("SEED_DEV_DATA")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(false),
-            bootstrap_admin_username: env::var("BOOTSTRAP_ADMIN_USERNAME").ok(),
-            bootstrap_admin_email: env::var("BOOTSTRAP_ADMIN_EMAIL").ok(),
-            bootstrap_admin_password: env::var("BOOTSTRAP_ADMIN_PASSWORD").ok(),
-        }
+            .build()
+            .unwrap_or_else(|e| panic!("failed to load configuration for profile {profile:?}: {e}"));
+
+        let mut config: Config = raw.try_deserialize().unwrap_or_else(|e| {
+            panic!("configuration for profile {profile:?} does not match the expected shape: {e}")
+        });
+        config.profile = profile;
+        config
     }
 }

@@ -1,5 +1,5 @@
 //! Opt-in local dev convenience: populates the database with a demo user, a
-//! few accounts and some transactions. Gated behind `SEED_DEV_DATA` and
+//! few accounts and some transactions. Gated behind `seed_dev_data` and
 //! skipped entirely if the demo user already exists, so it's safe to leave
 //! on across restarts.
 use chrono::{Duration, Utc};

@@ -1,0 +1,24 @@
+# Template for config/application-prod.yaml. That file is gitignored and
+# must be supplied by the deploy process — copy this, fill in real values,
+# and never commit it.
+
+database_url: "mysql://user:password@host:3306/budget_helper_back_r"
+
+# Raw secret bytes (not base64/hex encoded); use a long random string, 32+ bytes.
+jwt_secret: "REPLACE-WITH-A-LONG-RANDOM-SECRET-AT-LEAST-32-BYTES"
+
+# Bootstraps the first ROLE_ADMIN account on startup — required to ever use
+# /api/v1/users. All three must be set together; the deployment process
+# (e.g. pulling from a secrets manager) is expected to write these into the
+# real config/application-prod.yaml rather than an operator inserting the
+# row by hand. Safe to leave set permanently: it's a no-op once any admin
+# account exists.
+# bootstrap_admin_username: admin
+# bootstrap_admin_email: admin@example.com
+# bootstrap_admin_password: REPLACE-WITH-A-REAL-PASSWORD
+
+# Optional overrides of application.yaml's base values:
+# host: "0.0.0.0"
+# port: 8080
+# jwt_access_token_expiration_seconds: 86400
+# jwt_refresh_token_expiration_seconds: 604800
