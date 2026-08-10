@@ -3,7 +3,7 @@ use axum::{extract::Path, extract::State, Json};
 use crate::{error::AppError, extractors::CurrentUser, state::AppState};
 
 use super::{
-    model::{Account, AccountListResponse, AccountResponse},
+    model::{AccountListResponse, AccountRequest, AccountResponse},
     repository,
 };
 
@@ -18,10 +18,10 @@ pub async fn list(
 pub async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    Json(payload): Json<Account>,
-) -> Result<(), AppError> {
-    repository::create(&state.db, &payload.name, user.id).await?;
-    Ok(())
+    Json(payload): Json<AccountRequest>,
+) -> Result<Json<AccountResponse>, AppError> {
+    let account = repository::create(&state.db, &payload.name, user.id).await?;
+    Ok(Json(AccountResponse { account }))
 }
 
 pub async fn get_by_id(
@@ -37,10 +37,10 @@ pub async fn update(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
-    Json(payload): Json<Account>,
-) -> Result<(), AppError> {
-    repository::update(&state.db, id, user.id, &payload.name).await?;
-    Ok(())
+    Json(payload): Json<AccountRequest>,
+) -> Result<Json<AccountResponse>, AppError> {
+    let account = repository::update(&state.db, id, user.id, &payload.name).await?;
+    Ok(Json(AccountResponse { account }))
 }
 
 pub async fn delete(

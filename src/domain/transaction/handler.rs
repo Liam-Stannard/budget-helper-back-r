@@ -3,7 +3,7 @@ use axum::{extract::Path, extract::State, Json};
 use crate::{domain::account, error::AppError, extractors::CurrentUser, state::AppState};
 
 use super::{
-    model::{Transaction, TransactionListResponse, TransactionResponse},
+    model::{Transaction, TransactionListResponse, TransactionRequest, TransactionResponse},
     repository,
 };
 
@@ -32,12 +32,22 @@ pub async fn list(
 pub async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    Json(mut payload): Json<Transaction>,
-) -> Result<(), AppError> {
-    resolve_account_for_user(&state.db, payload.account_id, user.id).await?;
-    payload.user_id = user.id;
-    repository::create(&state.db, &payload).await?;
-    Ok(())
+    Json(payload): Json<TransactionRequest>,
+) -> Result<Json<TransactionResponse>, AppError> {
+    resolve_account_for_user(&state.db, payload.account.id, user.id).await?;
+    let transaction = Transaction {
+        id: 0,
+        category: payload.category,
+        title: payload.title,
+        amount: payload.amount,
+        date: payload.date,
+        account_id: payload.account.id,
+        user_id: user.id,
+    };
+    let created = repository::create(&state.db, &transaction).await?;
+    Ok(Json(TransactionResponse {
+        transaction: created,
+    }))
 }
 
 pub async fn get_by_id(
@@ -53,12 +63,22 @@ pub async fn update(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<i64>,
-    Json(mut payload): Json<Transaction>,
-) -> Result<(), AppError> {
-    resolve_account_for_user(&state.db, payload.account_id, user.id).await?;
-    payload.user_id = user.id;
-    repository::update(&state.db, id, user.id, &payload).await?;
-    Ok(())
+    Json(payload): Json<TransactionRequest>,
+) -> Result<Json<TransactionResponse>, AppError> {
+    resolve_account_for_user(&state.db, payload.account.id, user.id).await?;
+    let transaction = Transaction {
+        id,
+        category: payload.category,
+        title: payload.title,
+        amount: payload.amount,
+        date: payload.date,
+        account_id: payload.account.id,
+        user_id: user.id,
+    };
+    let updated = repository::update(&state.db, id, user.id, &transaction).await?;
+    Ok(Json(TransactionResponse {
+        transaction: updated,
+    }))
 }
 
 pub async fn delete(

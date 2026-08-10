@@ -1,19 +1,9 @@
-mod app;
-mod config;
-mod domain;
-mod error;
-mod extractors;
-mod middleware;
-mod state;
-
 use std::sync::Arc;
 
+use budget_helper_back_r::{app, bootstrap_admin, config::Config, dev_seed, state::AppState};
 use sqlx::mysql::MySqlPoolOptions;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
-use config::Config;
-use state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,6 +21,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     sqlx::migrate!("./migrations").run(&db).await?;
+
+    bootstrap_admin::run(&db, &config).await?;
+
+    if config.seed_dev_data {
+        dev_seed::run(&db).await?;
+    }
 
     let state = AppState {
         db,

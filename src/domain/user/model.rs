@@ -62,12 +62,22 @@ impl<'r> Decode<'r, MySql> for Role {
     }
 }
 
-#[derive(sqlx::FromRow, Serialize, Deserialize, Debug, Clone)]
+#[derive(sqlx::FromRow, Serialize, Debug, Clone)]
 pub struct User {
     pub id: i64,
     pub username: String,
     pub role: Role,
     pub email: String,
     #[serde(skip_serializing)]
+    pub password: String,
+}
+
+// `id` is server-assigned (create) or taken from the path (update), so create/update take this
+// instead of `User` directly — same reasoning as `account::model::AccountRequest`.
+#[derive(Deserialize, Debug, Clone)]
+pub struct UserRequest {
+    pub username: String,
+    pub role: Role,
+    pub email: String,
     pub password: String,
 }

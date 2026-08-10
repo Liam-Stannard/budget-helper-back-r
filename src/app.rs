@@ -7,7 +7,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     domain::{account, auth, transaction, user},
-    middleware::auth::require_auth,
+    middleware::auth::{require_admin, require_auth},
     state::AppState,
 };
 
@@ -46,6 +46,13 @@ pub fn build_router(state: AppState) -> Router {
                 .put(transaction::handler::update)
                 .delete(transaction::handler::delete),
         )
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
+
+    // `require_admin` reads the `Claims` request extension that `require_auth` inserts, so it
+    // must run *after* require_auth on the way in. `Router::layer` wraps outside whatever was
+    // there before, i.e. the layer added *last* runs *first* — so require_admin is added
+    // first (innermost, closest to the handler) and require_auth last (outermost).
+    let admin_only = Router::new()
         .route(
             "/api/v1/users",
             get(user::handler::list).post(user::handler::create),
@@ -56,10 +63,12 @@ pub fn build_router(state: AppState) -> Router {
                 .put(user::handler::update)
                 .delete(user::handler::delete),
         )
+        .layer(middleware::from_fn_with_state(state.clone(), require_admin))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     public
         .merge(protected)
+        .merge(admin_only)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -10,6 +10,8 @@ use sqlx::{
     Decode, Encode, Type,
 };
 
+use crate::domain::account::model::Account;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TransactionCategory {
@@ -70,7 +72,10 @@ impl<'r> Decode<'r, MySql> for TransactionCategory {
     }
 }
 
-#[derive(sqlx::FromRow, Serialize, Deserialize, Debug, Clone)]
+// The DB-facing row: `account_id` is the foreign key column. The API instead
+// exchanges a nested `account` object (see `TransactionRequest`/`TransactionDto`
+// below), matching what the frontend sends/expects.
+#[derive(Debug, Clone)]
 pub struct Transaction {
     pub id: i64,
     pub category: TransactionCategory,
@@ -81,13 +86,37 @@ pub struct Transaction {
     pub user_id: i64,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct AccountRef {
+    pub id: i64,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct TransactionRequest {
+    pub category: TransactionCategory,
+    pub title: String,
+    pub amount: Decimal,
+    pub date: NaiveDate,
+    pub account: AccountRef,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct TransactionDto {
+    pub id: i64,
+    pub category: TransactionCategory,
+    pub title: String,
+    pub amount: Decimal,
+    pub date: NaiveDate,
+    pub account: Account,
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct TransactionListResponse {
     #[serde(rename = "transactionList")]
-    pub transaction_list: Vec<Transaction>,
+    pub transaction_list: Vec<TransactionDto>,
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct TransactionResponse {
-    pub transaction: Transaction,
+    pub transaction: TransactionDto,
 }

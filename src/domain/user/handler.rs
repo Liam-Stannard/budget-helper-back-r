@@ -2,7 +2,10 @@ use axum::{extract::Path, extract::State, Json};
 
 use crate::{error::AppError, state::AppState};
 
-use super::{model::User, password, repository};
+use super::{
+    model::{User, UserRequest},
+    password, repository,
+};
 
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<User>>, AppError> {
     let users = repository::find_all(&state.db).await?;
@@ -11,10 +14,16 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<User>>, AppE
 
 pub async fn create(
     State(state): State<AppState>,
-    Json(mut payload): Json<User>,
+    Json(payload): Json<UserRequest>,
 ) -> Result<Json<User>, AppError> {
-    payload.password = password::hash_password(&payload.password)?;
-    let user = repository::create(&state.db, &payload).await?;
+    let new_user = User {
+        id: 0,
+        username: payload.username,
+        role: payload.role,
+        email: payload.email,
+        password: password::hash_password(&payload.password)?,
+    };
+    let user = repository::create(&state.db, &new_user).await?;
     Ok(Json(user))
 }
 
@@ -29,10 +38,16 @@ pub async fn get_by_id(
 pub async fn update(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-    Json(mut payload): Json<User>,
+    Json(payload): Json<UserRequest>,
 ) -> Result<Json<User>, AppError> {
-    payload.password = password::hash_password(&payload.password)?;
-    let user = repository::update(&state.db, id, &payload).await?;
+    let updated_user = User {
+        id,
+        username: payload.username,
+        role: payload.role,
+        email: payload.email,
+        password: password::hash_password(&payload.password)?,
+    };
+    let user = repository::update(&state.db, id, &updated_user).await?;
     Ok(Json(user))
 }
 

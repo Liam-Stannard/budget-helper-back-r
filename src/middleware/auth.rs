@@ -6,8 +6,9 @@ use axum::{
 };
 
 use crate::{
-    domain::{auth::jwt, token},
+    domain::{auth::jwt, token, user::model::Role},
     error::AppError,
+    extractors::CurrentUser,
     state::AppState,
 };
 
@@ -33,6 +34,22 @@ pub async fn require_auth(
     }
 
     req.extensions_mut().insert(claims);
+
+    Ok(next.run(req).await)
+}
+
+/// Must run behind `require_auth` (needs the `Claims` extension it inserts) — see the
+/// `admin_only` router in `app.rs`, which layers this inside `require_auth` so it runs second.
+pub async fn require_admin(
+    CurrentUser(user): CurrentUser,
+    req: Request,
+    next: Next,
+) -> Result<Response, AppError> {
+    if user.role != Role::RoleAdmin {
+        return Err(AppError::Forbidden(
+            "admin role required".to_string(),
+        ));
+    }
 
     Ok(next.run(req).await)
 }

@@ -217,6 +217,7 @@ dependencies = [
  "axum",
  "chrono",
  "dotenvy",
+ "http-body-util",
  "jsonwebtoken",
  "rust_decimal",
  "rust_decimal_macros",
