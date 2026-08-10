@@ -1,0 +1,6 @@
+CREATE TABLE `accounts` (
+    id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name    VARCHAR(255) NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    CONSTRAINT fk_accounts_user FOREIGN KEY (user_id) REFERENCES `user` (id) ON DELETE CASCADE
+);
