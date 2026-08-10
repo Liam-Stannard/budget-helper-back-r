@@ -181,6 +181,16 @@ types in `modules/transaction/shared/transaction.interface.ts`.
 
 ### `GET /api/v1/transaction`
 
+Query params (all optional):
+
+| Param | Format | Default | Notes |
+|---|---|---|---|
+| `from` | `YYYY-MM-DD` | unbounded | Inclusive lower bound on `date`. |
+| `to` | `YYYY-MM-DD` | unbounded | Inclusive upper bound on `date`. `400` if `from` is after `to`. |
+| `page` | integer, 0-based | `0` | |
+| `size` | integer | `50` | `400` if `0` or `> 200`. |
+| `sort` | `"<field>,<direction>"` | `"date,desc"` | `field` is one of `title`\|`account`\|`amount`\|`date`\|`category`; `direction` is `asc`\|`desc`. `400` on an unknown field/direction or a value with no comma. |
+
 Response `200 OK`:
 ```json
 {
@@ -193,11 +203,18 @@ Response `200 OK`:
       "date": "2026-08-08",
       "account": { "id": 1, "name": "Checking", "user_id": 1 }
     }
-  ]
+  ],
+  "totalElements": 1,
+  "totalPages": 1
 }
 ```
-Matches `IGetTransactionListResponse` / `ITransaction`. `account` **must** be a nested object
-with `.name` — this is the field the reported crash read `undefined.name` from.
+Matches `IGetTransactionListResponse` / `ITransaction` **for the `transactionList` array only**
+— `totalElements`/`totalPages` are new and the frontend interface doesn't declare them yet, so
+this is a known, tracked contract gap until the frontend's pagination work lands (extra JSON
+fields are harmless to an untyped consumer, but nothing on the frontend can use these two until
+`IGetTransactionListResponse` is updated to match).
+`account` **must** be a nested object with `.name` — this is the field the reported crash read
+`undefined.name` from.
 `amount` is serialized as a decimal string (via `rust_decimal`), not a JSON number, and is
 normalized to the `amount DECIMAL(19,4)` column's scale on every read — a transaction created
 with `"amount": "42.10"` reads back as `"42.1000"`, regardless of how the client formatted it
@@ -308,6 +325,13 @@ Response `200 OK`, empty body. Errors: `404` if no user with that ID exists.
    *good* thing security-wise (self-service signup can never mint an admin), but it does mean
    the field is accepted and then thrown away without any error, which is confusing API
    behavior worth documenting explicitly.
+3. **`GET /api/v1/transaction`'s new `totalElements`/`totalPages` fields aren't in
+   `IGetTransactionListResponse` yet.** The frontend still fetches the whole list unfiltered
+   and paginates/sorts client-side (`transaction-list.component.ts`'s `MatTableDataSource`);
+   the backend now supports `from`/`to`/`page`/`size`/`sort`, but nothing on the frontend sends
+   them or reads the new response fields. Not a wire-format break (unknown JSON fields are
+   harmless to an untyped consumer) — just unfinished, tracked here until the frontend half of
+   this change lands.
 
 ## Bootstrapping the first admin
 

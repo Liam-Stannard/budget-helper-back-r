@@ -3,7 +3,25 @@ use sqlx::MySqlPool;
 use crate::domain::account::model::Account;
 use crate::error::AppError;
 
-use super::model::{Transaction, TransactionCategory, TransactionDto};
+use super::model::{
+    SortDirection, Transaction, TransactionCategory, TransactionDto, TransactionSortField,
+};
+
+/// Sentinels for an unbounded `from`/`to`, rather than `chrono::NaiveDate::MIN`/`MAX`: those are
+/// far outside MySQL's `DATE` column range ('1000-01-01' to '9999-12-31') and would fail to
+/// bind.
+fn min_date() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(1000, 1, 1).expect("valid date literal")
+}
+
+fn max_date() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(9999, 12, 31).expect("valid date literal")
+}
+
+pub struct TransactionPage {
+    pub transactions: Vec<TransactionDto>,
+    pub total_elements: i64,
+}
 
 const SELECT_FIELDS: &str = "t.id, t.category, t.title, t.amount, t.date, t.account_id, t.user_id, a.name AS account_name \
     FROM transactions t JOIN accounts a ON a.id = t.account_id";
@@ -37,16 +55,48 @@ impl From<TransactionRow> for TransactionDto {
     }
 }
 
-pub async fn find_all_for_user(
+#[allow(clippy::too_many_arguments)]
+pub async fn find_page_for_user(
     pool: &MySqlPool,
     user_id: i64,
-) -> Result<Vec<TransactionDto>, AppError> {
-    let transactions =
-        sqlx::query_as::<_, TransactionRow>(&format!("SELECT {SELECT_FIELDS} WHERE t.user_id = ?"))
-            .bind(user_id)
-            .fetch_all(pool)
-            .await?;
-    Ok(transactions.into_iter().map(TransactionDto::from).collect())
+    from: Option<chrono::NaiveDate>,
+    to: Option<chrono::NaiveDate>,
+    sort: TransactionSortField,
+    direction: SortDirection,
+    page: u32,
+    size: u32,
+) -> Result<TransactionPage, AppError> {
+    let from = from.unwrap_or_else(min_date);
+    let to = to.unwrap_or_else(max_date);
+    let offset = i64::from(page) * i64::from(size);
+    let column = sort.column();
+    let direction = direction.as_sql();
+
+    let transactions = sqlx::query_as::<_, TransactionRow>(&format!(
+        "SELECT {SELECT_FIELDS} WHERE t.user_id = ? AND t.date BETWEEN ? AND ? \
+         ORDER BY {column} {direction} LIMIT ? OFFSET ?"
+    ))
+    .bind(user_id)
+    .bind(from)
+    .bind(to)
+    .bind(size)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let total_elements: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM transactions t WHERE t.user_id = ? AND t.date BETWEEN ? AND ?",
+    )
+    .bind(user_id)
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(TransactionPage {
+        transactions: transactions.into_iter().map(TransactionDto::from).collect(),
+        total_elements,
+    })
 }
 
 pub async fn find_by_id_for_user(

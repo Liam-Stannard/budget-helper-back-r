@@ -114,6 +114,92 @@ pub struct TransactionDto {
 pub struct TransactionListResponse {
     #[serde(rename = "transactionList")]
     pub transaction_list: Vec<TransactionDto>,
+    #[serde(rename = "totalElements")]
+    pub total_elements: i64,
+    #[serde(rename = "totalPages")]
+    pub total_pages: i64,
+}
+
+/// Query params for `GET /api/v1/transaction`. All optional: an absent `from`/`to` leaves that
+/// side of the date range unbounded, and an absent `page`/`size`/`sort` falls back to the
+/// handler's defaults (see `handler::list`).
+#[derive(Deserialize, Debug, Clone)]
+pub struct TransactionListQuery {
+    pub from: Option<NaiveDate>,
+    pub to: Option<NaiveDate>,
+    pub page: Option<u32>,
+    pub size: Option<u32>,
+    /// `"<field>,<direction>"`, e.g. `"date,desc"`. See `TransactionSortField`/`SortDirection`.
+    pub sort: Option<String>,
+}
+
+/// The columns the transactions list can be sorted by. Deliberately an allowlist rather than
+/// accepting a raw column name: `sort` comes from the query string, and the SQL it drives is
+/// built with `format!` (see `repository::SELECT_FIELDS`), which can't parameterize a column
+/// name the way `.bind()` parameterizes a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionSortField {
+    Title,
+    Account,
+    Amount,
+    Date,
+    Category,
+}
+
+impl TransactionSortField {
+    pub fn column(&self) -> &'static str {
+        match self {
+            TransactionSortField::Title => "t.title",
+            // `SELECT_FIELDS` already joins `accounts a`, so sorting by the account's name
+            // needs no extra join.
+            TransactionSortField::Account => "a.name",
+            TransactionSortField::Amount => "t.amount",
+            TransactionSortField::Date => "t.date",
+            TransactionSortField::Category => "t.category",
+        }
+    }
+}
+
+impl FromStr for TransactionSortField {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "title" => Ok(TransactionSortField::Title),
+            "account" => Ok(TransactionSortField::Account),
+            "amount" => Ok(TransactionSortField::Amount),
+            "date" => Ok(TransactionSortField::Date),
+            "category" => Ok(TransactionSortField::Category),
+            other => Err(format!("unknown sort field: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl SortDirection {
+    pub fn as_sql(&self) -> &'static str {
+        match self {
+            SortDirection::Asc => "ASC",
+            SortDirection::Desc => "DESC",
+        }
+    }
+}
+
+impl FromStr for SortDirection {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asc" => Ok(SortDirection::Asc),
+            "desc" => Ok(SortDirection::Desc),
+            other => Err(format!("unknown sort direction: {other}")),
+        }
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]

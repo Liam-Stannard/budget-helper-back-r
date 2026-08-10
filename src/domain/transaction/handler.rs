@@ -1,11 +1,36 @@
-use axum::{extract::Path, extract::State, Json};
+use axum::{
+    extract::{Path, Query},
+    extract::State,
+    Json,
+};
 
 use crate::{domain::account, error::AppError, extractors::CurrentUser, state::AppState};
 
 use super::{
-    model::{Transaction, TransactionListResponse, TransactionRequest, TransactionResponse},
+    model::{
+        SortDirection, Transaction, TransactionListQuery, TransactionListResponse,
+        TransactionRequest, TransactionResponse, TransactionSortField,
+    },
     repository,
 };
+
+const DEFAULT_PAGE_SIZE: u32 = 50;
+const MAX_PAGE_SIZE: u32 = 200;
+const DEFAULT_SORT: (TransactionSortField, SortDirection) =
+    (TransactionSortField::Date, SortDirection::Desc);
+
+/// `"<field>,<direction>"`, e.g. `"date,desc"` — see `TransactionSortField`/`SortDirection` for
+/// the allowed values of each half.
+fn parse_sort(raw: &str) -> Result<(TransactionSortField, SortDirection), AppError> {
+    let (field, direction) = raw
+        .split_once(',')
+        .ok_or_else(|| AppError::BadRequest(format!("invalid `sort` value: {raw}")))?;
+    let field = field.parse::<TransactionSortField>().map_err(AppError::BadRequest)?;
+    let direction = direction
+        .parse::<SortDirection>()
+        .map_err(AppError::BadRequest)?;
+    Ok((field, direction))
+}
 
 async fn resolve_account_for_user(
     pool: &sqlx::MySqlPool,
@@ -24,9 +49,41 @@ async fn resolve_account_for_user(
 pub async fn list(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    Query(query): Query<TransactionListQuery>,
 ) -> Result<Json<TransactionListResponse>, AppError> {
-    let transaction_list = repository::find_all_for_user(&state.db, user.id).await?;
-    Ok(Json(TransactionListResponse { transaction_list }))
+    if let (Some(from), Some(to)) = (query.from, query.to) {
+        if from > to {
+            return Err(AppError::BadRequest(
+                "`from` must not be after `to`".to_string(),
+            ));
+        }
+    }
+
+    let size = query.size.unwrap_or(DEFAULT_PAGE_SIZE);
+    if size == 0 || size > MAX_PAGE_SIZE {
+        return Err(AppError::BadRequest(format!(
+            "`size` must be between 1 and {MAX_PAGE_SIZE}"
+        )));
+    }
+    let page = query.page.unwrap_or(0);
+
+    let (sort, direction) = match query.sort.as_deref() {
+        Some(raw) => parse_sort(raw)?,
+        None => DEFAULT_SORT,
+    };
+
+    let result = repository::find_page_for_user(
+        &state.db, user.id, query.from, query.to, sort, direction, page, size,
+    )
+    .await?;
+
+    let total_pages = (result.total_elements + i64::from(size) - 1) / i64::from(size);
+
+    Ok(Json(TransactionListResponse {
+        transaction_list: result.transactions,
+        total_elements: result.total_elements,
+        total_pages,
+    }))
 }
 
 pub async fn create(

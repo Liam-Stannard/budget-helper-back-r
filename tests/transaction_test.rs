@@ -43,6 +43,10 @@ struct TransactionResponseContract {
 struct TransactionListResponseContract {
     #[serde(rename = "transactionList")]
     transaction_list: Vec<TransactionContract>,
+    #[serde(rename = "totalElements")]
+    total_elements: i64,
+    #[serde(rename = "totalPages")]
+    total_pages: i64,
 }
 
 async fn create_account(app: &TestApp, token: &str, name: &str) -> i64 {
@@ -51,6 +55,27 @@ async fn create_account(app: &TestApp, token: &str, name: &str) -> i64 {
         .await;
     assert_eq!(response.status, StatusCode::OK, "account setup failed: {:?}", response.json);
     response.json["account"]["id"].as_i64().unwrap()
+}
+
+async fn create_transaction(
+    app: &TestApp,
+    token: &str,
+    account_id: i64,
+    title: &str,
+    amount: &str,
+    date: &str,
+) {
+    let response = app
+        .post(
+            "/api/v1/transaction",
+            Some(token),
+            json!({
+                "category": "FOOD", "title": title, "amount": amount,
+                "date": date, "account": { "id": account_id },
+            }),
+        )
+        .await;
+    assert_eq!(response.status, StatusCode::OK, "transaction setup failed: {:?}", response.json);
 }
 
 #[tokio::test]
@@ -119,6 +144,8 @@ async fn list_transactions_nests_the_account_object_for_every_row() {
     assert_eq!(response.status, StatusCode::OK);
     let body: TransactionListResponseContract = response.body_as();
     assert_eq!(body.transaction_list.len(), 2);
+    assert_eq!(body.total_elements, 2);
+    assert_eq!(body.total_pages, 1);
 
     let electricity = body
         .transaction_list
@@ -455,6 +482,125 @@ async fn transaction_list_only_includes_the_callers_own_transactions() {
 
     assert_eq!(body.transaction_list.len(), 1);
     assert_eq!(body.transaction_list[0].title, "Alice's lunch");
+    assert_eq!(body.total_elements, 1);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filters_by_date_range() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-date-range").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    create_transaction(&app, &token, account, "February", "10.00", "2026-02-15").await;
+    create_transaction(&app, &token, account, "March", "20.00", "2026-03-15").await;
+    create_transaction(&app, &token, account, "April", "30.00", "2026-04-15").await;
+
+    let response = app
+        .get(
+            "/api/v1/transaction?from=2026-03-01&to=2026-03-31",
+            Some(&token),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 1);
+    assert_eq!(body.transaction_list[0].title, "March");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_from_after_to() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-bad-range").await;
+
+    let response = app
+        .get(
+            "/api/v1/transaction?from=2026-03-31&to=2026-03-01",
+            Some(&token),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_paginates_by_row_count() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-page").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    create_transaction(&app, &token, account, "One", "1.00", "2026-03-01").await;
+    create_transaction(&app, &token, account, "Two", "2.00", "2026-03-02").await;
+    create_transaction(&app, &token, account, "Three", "3.00", "2026-03-03").await;
+
+    let first_page = app
+        .get("/api/v1/transaction?page=0&size=2&sort=date,asc", Some(&token))
+        .await;
+    let first_page_body: TransactionListResponseContract = first_page.body_as();
+    assert_eq!(first_page_body.transaction_list.len(), 2);
+    assert_eq!(first_page_body.total_elements, 3);
+    assert_eq!(first_page_body.total_pages, 2);
+    assert_eq!(first_page_body.transaction_list[0].title, "One");
+    assert_eq!(first_page_body.transaction_list[1].title, "Two");
+
+    let second_page = app
+        .get("/api/v1/transaction?page=1&size=2&sort=date,asc", Some(&token))
+        .await;
+    let second_page_body: TransactionListResponseContract = second_page.body_as();
+    assert_eq!(second_page_body.transaction_list.len(), 1);
+    assert_eq!(second_page_body.transaction_list[0].title, "Three");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_oversized_page_size() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-big-page").await;
+
+    let response = app.get("/api/v1/transaction?size=201", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_sorts_by_the_requested_field_and_direction() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-sort").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    create_transaction(&app, &token, account, "Cheap", "5.00", "2026-03-01").await;
+    create_transaction(&app, &token, account, "Pricey", "50.00", "2026-03-02").await;
+
+    let response = app
+        .get("/api/v1/transaction?sort=amount,desc", Some(&token))
+        .await;
+    let body: TransactionListResponseContract = response.body_as();
+
+    assert_eq!(body.transaction_list[0].title, "Pricey");
+    assert_eq!(body.transaction_list[1].title, "Cheap");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_an_unknown_sort_field() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-bad-sort").await;
+
+    let response = app
+        .get("/api/v1/transaction?sort=bogus,asc", Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
 
     app.cleanup().await;
 }
