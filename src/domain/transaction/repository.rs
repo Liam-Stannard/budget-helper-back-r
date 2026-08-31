@@ -61,6 +61,8 @@ pub async fn find_page_for_user(
     user_id: i64,
     from: Option<chrono::NaiveDate>,
     to: Option<chrono::NaiveDate>,
+    category: Option<TransactionCategory>,
+    account_id: Option<i64>,
     sort: TransactionSortField,
     direction: SortDirection,
     page: u32,
@@ -72,26 +74,51 @@ pub async fn find_page_for_user(
     let column = sort.column();
     let direction = direction.as_sql();
 
-    let transactions = sqlx::query_as::<_, TransactionRow>(&format!(
-        "SELECT {SELECT_FIELDS} WHERE t.user_id = ? AND t.date BETWEEN ? AND ? \
-         ORDER BY {column} {direction} LIMIT ? OFFSET ?"
-    ))
-    .bind(user_id)
-    .bind(from)
-    .bind(to)
-    .bind(size)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+    // Built up conditionally (never with interpolated values — those are always `.bind()`ed
+    // below) so the two filters stay independently optional and are kept in sync between the
+    // `SELECT` and `COUNT(*)` queries.
+    let mut filters = String::new();
+    if category.is_some() {
+        filters.push_str(" AND t.category = ?");
+    }
+    if account_id.is_some() {
+        filters.push_str(" AND t.account_id = ?");
+    }
 
-    let total_elements: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM transactions t WHERE t.user_id = ? AND t.date BETWEEN ? AND ?",
-    )
-    .bind(user_id)
-    .bind(from)
-    .bind(to)
-    .fetch_one(pool)
-    .await?;
+    let transactions_sql = format!(
+        "SELECT {SELECT_FIELDS} WHERE t.user_id = ? AND t.date BETWEEN ? AND ?{filters} \
+         ORDER BY {column} {direction} LIMIT ? OFFSET ?"
+    );
+    let mut transactions_query = sqlx::query_as::<_, TransactionRow>(&transactions_sql)
+        .bind(user_id)
+        .bind(from)
+        .bind(to);
+    if let Some(category) = category {
+        transactions_query = transactions_query.bind(category);
+    }
+    if let Some(account_id) = account_id {
+        transactions_query = transactions_query.bind(account_id);
+    }
+    let transactions = transactions_query
+        .bind(size)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM transactions t WHERE t.user_id = ? AND t.date BETWEEN ? AND ?{filters}"
+    );
+    let mut count_query = sqlx::query_scalar(&count_sql)
+        .bind(user_id)
+        .bind(from)
+        .bind(to);
+    if let Some(category) = category {
+        count_query = count_query.bind(category);
+    }
+    if let Some(account_id) = account_id {
+        count_query = count_query.bind(account_id);
+    }
+    let total_elements: i64 = count_query.fetch_one(pool).await?;
 
     Ok(TransactionPage {
         transactions: transactions.into_iter().map(TransactionDto::from).collect(),

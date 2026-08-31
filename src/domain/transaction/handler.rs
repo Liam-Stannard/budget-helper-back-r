@@ -72,8 +72,15 @@ pub async fn list(
         None => DEFAULT_SORT,
     };
 
+    // Same ownership check `create`/`update` apply to a body-supplied `account.id`: filtering by
+    // an account the user doesn't own is treated as forbidden, not as an empty result.
+    if let Some(account_id) = query.account_id {
+        resolve_account_for_user(&state.db, account_id, user.id).await?;
+    }
+
     let result = repository::find_page_for_user(
-        &state.db, user.id, query.from, query.to, sort, direction, page, size,
+        &state.db, user.id, query.from, query.to, query.category, query.account_id, sort,
+        direction, page, size,
     )
     .await?;
 
