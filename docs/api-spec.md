@@ -39,10 +39,12 @@ Source of truth for frontend types: `budget-helper-front/src/app/**/*.interface.
 
 - **Ownership model**: accounts and transactions are scoped to the authenticated user
   (`user_id` column). Reading/mutating another user's account or transaction by ID returns
-  **404**, not 403 — existence isn't leaked. The one exception is creating/updating a
-  *transaction* against an `account_id`/`account.id` that belongs to someone else, which
-  returns **403** (`src/domain/transaction/handler.rs::resolve_account_for_user`), because at
-  that point the account's existence is already implied by the caller having supplied its ID.
+  **404**, not 403 — existence isn't leaked. The exception is any request that references an
+  `account_id`/`account.id` belonging to someone else as a foreign-key-style filter or link
+  rather than as the primary resource being fetched — creating/updating a *transaction* against
+  such an account, or filtering `GET /api/v1/transaction` by `account_id` — which returns
+  **403** (`src/domain/transaction/handler.rs::resolve_account_for_user`), because at that point
+  the account's existence is already implied by the caller having supplied its ID.
 
 ---
 
@@ -210,6 +212,12 @@ Query params (all optional):
 | `page` | integer, 0-based | `0` | |
 | `size` | integer | `50` | `400` if `0` or `> 200`. |
 | `sort` | `"<field>,<direction>"` | `"date,desc"` | `field` is one of `title`\|`account`\|`amount`\|`date`\|`category`; `direction` is `asc`\|`desc`. `400` on an unknown field/direction or a value with no comma. |
+| `category` | `"FOOD"` \| `"BILL"` \| `"SUBSCRIPTION"` \| `"CLOTHING"` \| `"INCOME"` | unfiltered | Exact match. |
+| `account_id` | integer | unfiltered | Restricts to transactions on this account. Independently optional and combinable with `category` and/or the date range. |
+
+Errors:
+- `403` if `account_id` refers to an account owned by a different user (same rule as `POST`/`PUT`, via `resolve_account_for_user`).
+- `404` if `account_id` doesn't exist at all.
 
 Response `200 OK`:
 ```json

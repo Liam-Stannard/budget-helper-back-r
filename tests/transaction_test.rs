@@ -606,6 +606,450 @@ async fn transaction_list_rejects_an_unknown_sort_field() {
 }
 
 #[tokio::test]
+async fn transaction_list_filters_by_category() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-category-filter").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Groceries", "amount": "10.00",
+            "date": "2026-03-01", "account": { "id": account },
+        }),
+    )
+    .await;
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "BILL", "title": "Electricity", "amount": "20.00",
+            "date": "2026-03-02", "account": { "id": account },
+        }),
+    )
+    .await;
+
+    let response = app.get("/api/v1/transaction?category=BILL", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 1);
+    assert_eq!(body.total_pages, 1);
+    assert_eq!(body.transaction_list.len(), 1);
+    assert_eq!(body.transaction_list[0].title, "Electricity");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filters_by_account_id() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-account-filter").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    create_transaction(&app, &token, checking, "Checking tx", "10.00", "2026-03-01").await;
+    create_transaction(&app, &token, savings, "Savings tx", "20.00", "2026-03-02").await;
+
+    let response = app
+        .get(&format!("/api/v1/transaction?account_id={savings}"), Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 1);
+    assert_eq!(body.total_pages, 1);
+    assert_eq!(body.transaction_list.len(), 1);
+    assert_eq!(body.transaction_list[0].title, "Savings tx");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filters_by_category_and_account_id_together() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-both-filters").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Checking food", "amount": "10.00",
+            "date": "2026-03-01", "account": { "id": checking },
+        }),
+    )
+    .await;
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "BILL", "title": "Checking bill", "amount": "20.00",
+            "date": "2026-03-02", "account": { "id": checking },
+        }),
+    )
+    .await;
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Savings food", "amount": "30.00",
+            "date": "2026-03-03", "account": { "id": savings },
+        }),
+    )
+    .await;
+
+    let response = app
+        .get(&format!("/api/v1/transaction?category=FOOD&account_id={checking}"), Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 1);
+    assert_eq!(body.transaction_list.len(), 1);
+    assert_eq!(body.transaction_list[0].title, "Checking food");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_without_category_or_account_filters_is_unaffected() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-no-filters").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    create_transaction(&app, &token, account, "One", "1.00", "2026-03-01").await;
+    create_transaction(&app, &token, account, "Two", "2.00", "2026-03-02").await;
+
+    let response = app.get("/api/v1/transaction", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 2);
+    assert_eq!(body.transaction_list.len(), 2);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filtering_by_another_users_account_returns_403() {
+    let app = TestApp::spawn().await;
+    let alice = register_user(&app, "tx-list-forbidden-alice").await;
+    let bob = register_user(&app, "tx-list-forbidden-bob").await;
+    let alice_account = create_account(&app, &alice, "Alice Checking").await;
+
+    let response = app
+        .get(&format!("/api/v1/transaction?account_id={alice_account}"), Some(&bob))
+        .await;
+
+    assert_eq!(response.status, StatusCode::FORBIDDEN);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filtering_by_a_nonexistent_account_returns_404() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-list-no-account").await;
+
+    let response = app.get("/api/v1/transaction?account_id=999999", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::NOT_FOUND);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filtered_pagination_reflects_the_filtered_count_across_both_pages() {
+    // 5 FOOD transactions (spanning 3 pages at size=2) plus 2 BILL transactions the filter
+    // should exclude entirely. If `totalElements`/`totalPages` were computed off the
+    // unfiltered total (7) rather than the filtered count (5), or if the two queries drifted
+    // out of sync, this would show up as a mismatch between what's counted and what's
+    // actually paged through.
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-filtered-paging").await;
+    let account = create_account(&app, &token, "Checking").await;
+
+    for (title, date) in [
+        ("Food One", "2026-03-01"),
+        ("Food Two", "2026-03-02"),
+        ("Food Three", "2026-03-03"),
+        ("Food Four", "2026-03-04"),
+        ("Food Five", "2026-03-05"),
+    ] {
+        create_transaction(&app, &token, account, title, "1.00", date).await;
+    }
+    for (title, date) in [("Bill One", "2026-03-06"), ("Bill Two", "2026-03-07")] {
+        app.post(
+            "/api/v1/transaction",
+            Some(&token),
+            json!({
+                "category": "BILL", "title": title, "amount": "2.00",
+                "date": date, "account": { "id": account },
+            }),
+        )
+        .await;
+    }
+
+    let mut seen_titles: Vec<String> = Vec::new();
+    for page in 0..3 {
+        let response = app
+            .get(
+                &format!("/api/v1/transaction?category=FOOD&page={page}&size=2&sort=date,asc"),
+                Some(&token),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::OK, "page {page}: {:?}", response.json);
+        let body: TransactionListResponseContract = response.body_as();
+        // Filtered count (5 FOOD), not the unfiltered total (7).
+        assert_eq!(body.total_elements, 5, "page {page}");
+        assert_eq!(body.total_pages, 3, "page {page}");
+        for tx in &body.transaction_list {
+            assert!(tx.title.starts_with("Food"), "page {page} leaked a non-FOOD row: {}", tx.title);
+        }
+        seen_titles.extend(body.transaction_list.iter().map(|t| t.title.clone()));
+    }
+
+    seen_titles.sort();
+    assert_eq!(
+        seen_titles,
+        vec!["Food Five", "Food Four", "Food One", "Food Three", "Food Two"],
+        "paging through all filtered pages should yield the complete, non-overlapping FOOD set"
+    );
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_an_invalid_category_value_with_400() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-bad-category").await;
+
+    let response = app.get("/api/v1/transaction?category=NOTACATEGORY", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST, "body: {:?}", response.json);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_an_empty_category_value_with_400() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-empty-category").await;
+
+    let response = app.get("/api/v1/transaction?category=", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST, "body: {:?}", response.json);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_date_range_category_and_account_combine_with_and_semantics() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-triple-filter").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    // Matches all three filters (in range, FOOD, checking).
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Match", "amount": "10.00",
+            "date": "2026-03-15", "account": { "id": checking },
+        }),
+    )
+    .await;
+    // In range + checking, but wrong category — should be excluded by the category filter.
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "BILL", "title": "Wrong category", "amount": "10.00",
+            "date": "2026-03-16", "account": { "id": checking },
+        }),
+    )
+    .await;
+    // In range + FOOD, but wrong account — should be excluded by the account filter.
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Wrong account", "amount": "10.00",
+            "date": "2026-03-17", "account": { "id": savings },
+        }),
+    )
+    .await;
+    // FOOD + checking, but outside the date range — should be excluded by the date filter.
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "FOOD", "title": "Wrong date", "amount": "10.00",
+            "date": "2026-04-01", "account": { "id": checking },
+        }),
+    )
+    .await;
+
+    let response = app
+        .get(
+            &format!(
+                "/api/v1/transaction?from=2026-03-01&to=2026-03-31&category=FOOD&account_id={checking}"
+            ),
+            Some(&token),
+        )
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 1, "body: {:?}", body.transaction_list.iter().map(|t| &t.title).collect::<Vec<_>>());
+    assert_eq!(body.transaction_list.len(), 1);
+    assert_eq!(body.transaction_list[0].title, "Match");
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_category_and_account_with_zero_matches_returns_empty_not_error() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-zero-matches").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    // FOOD exists, but only on `savings`; BILL exists, but only on `checking`. Filtering for
+    // FOOD on `checking` should therefore match nothing.
+    create_transaction(&app, &token, savings, "Savings food", "5.00", "2026-03-01").await;
+    app.post(
+        "/api/v1/transaction",
+        Some(&token),
+        json!({
+            "category": "BILL", "title": "Checking bill", "amount": "5.00",
+            "date": "2026-03-02", "account": { "id": checking },
+        }),
+    )
+    .await;
+
+    let response = app
+        .get(&format!("/api/v1/transaction?category=FOOD&account_id={checking}"), Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 0);
+    assert_eq!(body.total_pages, 0);
+    assert!(body.transaction_list.is_empty());
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_filtering_by_own_account_id_works_end_to_end() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-own-account-filter").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    create_transaction(&app, &token, checking, "Checking A", "1.00", "2026-03-01").await;
+    create_transaction(&app, &token, checking, "Checking B", "2.00", "2026-03-02").await;
+    create_transaction(&app, &token, savings, "Savings A", "3.00", "2026-03-03").await;
+
+    let response = app
+        .get(&format!("/api/v1/transaction?account_id={checking}"), Some(&token))
+        .await;
+
+    assert_eq!(response.status, StatusCode::OK, "body: {:?}", response.json);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, 2);
+    let mut titles: Vec<&str> = body.transaction_list.iter().map(|t| t.title.as_str()).collect();
+    titles.sort();
+    assert_eq!(titles, vec!["Checking A", "Checking B"]);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_rejects_a_non_numeric_account_id_with_400() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-nonnumeric-account").await;
+
+    let response = app.get("/api/v1/transaction?account_id=abc", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::BAD_REQUEST, "body: {:?}", response.json);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_negative_account_id_returns_404_not_a_server_error() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-negative-account").await;
+
+    let response = app.get("/api/v1/transaction?account_id=-1", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::NOT_FOUND, "body: {:?}", response.json);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_zero_account_id_returns_404_not_a_server_error() {
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-zero-account").await;
+
+    let response = app.get("/api/v1/transaction?account_id=0", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::NOT_FOUND, "body: {:?}", response.json);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
+async fn transaction_list_unfiltered_returns_every_transaction_across_categories_and_accounts() {
+    // Regression check for the plain (no `category`/`account_id`) path with a larger, more
+    // varied dataset than the existing minimal coverage: many transactions, several accounts,
+    // every category, still all returned unfiltered.
+    let app = TestApp::spawn().await;
+    let token = register_user(&app, "tx-large-unfiltered").await;
+    let checking = create_account(&app, &token, "Checking").await;
+    let savings = create_account(&app, &token, "Savings").await;
+
+    let categories = ["FOOD", "BILL", "SUBSCRIPTION", "CLOTHING", "INCOME"];
+    let mut expected_titles: Vec<String> = Vec::new();
+    for (i, category) in categories.iter().enumerate() {
+        for j in 0..3 {
+            let account = if (i + j) % 2 == 0 { checking } else { savings };
+            let title = format!("{category}-{j}");
+            app.post(
+                "/api/v1/transaction",
+                Some(&token),
+                json!({
+                    "category": category, "title": title, "amount": "1.00",
+                    "date": format!("2026-03-{:02}", i * 3 + j + 1), "account": { "id": account },
+                }),
+            )
+            .await;
+            expected_titles.push(title);
+        }
+    }
+
+    let response = app.get("/api/v1/transaction?size=200", Some(&token)).await;
+
+    assert_eq!(response.status, StatusCode::OK);
+    let body: TransactionListResponseContract = response.body_as();
+    assert_eq!(body.total_elements, expected_titles.len() as i64);
+    assert_eq!(body.transaction_list.len(), expected_titles.len());
+    let mut actual_titles: Vec<String> = body.transaction_list.iter().map(|t| t.title.clone()).collect();
+    actual_titles.sort();
+    expected_titles.sort();
+    assert_eq!(actual_titles, expected_titles);
+
+    app.cleanup().await;
+}
+
+#[tokio::test]
 async fn transaction_routes_require_auth() {
     let app = TestApp::spawn().await;
 

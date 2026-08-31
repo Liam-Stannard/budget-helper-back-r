@@ -127,8 +127,9 @@ pub struct TransactionListResponse {
 }
 
 /// Query params for `GET /api/v1/transaction`. All optional: an absent `from`/`to` leaves that
-/// side of the date range unbounded, and an absent `page`/`size`/`sort` falls back to the
-/// handler's defaults (see `handler::list`).
+/// side of the date range unbounded, an absent `page`/`size`/`sort` falls back to the
+/// handler's defaults (see `handler::list`), and an absent `category`/`account_id` leaves that
+/// filter unapplied. `category`/`account_id` are independently optional and combinable.
 #[derive(Deserialize, Debug, Clone)]
 pub struct TransactionListQuery {
     pub from: Option<NaiveDate>,
@@ -137,6 +138,10 @@ pub struct TransactionListQuery {
     pub size: Option<u32>,
     /// `"<field>,<direction>"`, e.g. `"date,desc"`. See `TransactionSortField`/`SortDirection`.
     pub sort: Option<String>,
+    pub category: Option<TransactionCategory>,
+    /// Filters to transactions on this account. Ownership is checked in `handler::list` (see
+    /// `resolve_account_for_user`) before this reaches the repository.
+    pub account_id: Option<i64>,
 }
 
 /// The columns the transactions list can be sorted by. Deliberately an allowlist rather than
