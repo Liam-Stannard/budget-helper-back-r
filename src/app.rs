@@ -1,12 +1,12 @@
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    domain::{account, auth, transaction, user},
+    domain::{account, auth, budget, transaction, user},
     middleware::auth::{require_admin, require_auth},
     state::AppState,
 };
@@ -35,6 +35,11 @@ pub fn build_router(state: AppState) -> Router {
             get(account::handler::get_by_id)
                 .put(account::handler::update)
                 .delete(account::handler::delete),
+        )
+        .route("/api/v1/budget", get(budget::handler::list))
+        .route(
+            "/api/v1/budget/{category}",
+            put(budget::handler::upsert).delete(budget::handler::delete),
         )
         .route(
             "/api/v1/transaction",

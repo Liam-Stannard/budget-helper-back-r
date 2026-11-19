@@ -2,11 +2,12 @@
 //! few accounts and some transactions. Gated behind `seed_dev_data` and
 //! skipped entirely if the demo user already exists, so it's safe to leave
 //! on across restarts.
-use chrono::{Duration, Utc};
+use chrono::{Datelike, Duration, Months, Utc};
 use rust_decimal_macros::dec;
 use sqlx::MySqlPool;
 
 use crate::domain::account;
+use crate::domain::budget;
 use crate::domain::transaction::{
     self,
     model::{Transaction, TransactionCategory},
@@ -55,7 +56,6 @@ pub async fn run(pool: &MySqlPool) -> Result<(), AppError> {
     let today = Utc::now().date_naive();
 
     let seed_transactions: &[(i64, TransactionCategory, &str, rust_decimal::Decimal, i64)] = &[
-        (checking.id, TransactionCategory::Income, "Paycheck", dec!(3200.00), 12),
         (checking.id, TransactionCategory::Bill, "Electricity bill", dec!(84.32), 2),
         (checking.id, TransactionCategory::Bill, "Internet bill", dec!(59.99), 5),
         (checking.id, TransactionCategory::Food, "Grocery run", dec!(112.47), 3),
@@ -86,12 +86,44 @@ pub async fn run(pool: &MySqlPool) -> Result<(), AppError> {
         .await?;
     }
 
+    // Salary is anchored to the 1st of this month and of last month (rather than a fixed
+    // `days_ago` like the rows above) so both months always have income, whatever day the seed
+    // happens to run on — the Home screen's income/net cards compare the two.
+    let this_month_start = today.with_day(1).expect("day 1 always exists");
+    let last_month_start = this_month_start - Months::new(1);
+    for date in [last_month_start, this_month_start] {
+        transaction::repository::create(
+            pool,
+            &Transaction {
+                id: 0,
+                category: TransactionCategory::Income,
+                title: "Salary".to_string(),
+                amount: dec!(3200.00),
+                date,
+                account_id: checking.id,
+                user_id: demo_user.id,
+            },
+        )
+        .await?;
+    }
+
+    let seed_budgets = [
+        (TransactionCategory::Food, dec!(250.00)),
+        (TransactionCategory::Bill, dec!(500.00)),
+        (TransactionCategory::Subscription, dec!(40.00)),
+        (TransactionCategory::Clothing, dec!(100.00)),
+    ];
+    for (category, monthly_limit) in seed_budgets {
+        budget::repository::upsert(pool, demo_user.id, category, monthly_limit).await?;
+    }
+
     tracing::info!(
-        "seeded dev data: user '{}' / '{}' with {} accounts and {} transactions",
+        "seeded dev data: user '{}' / '{}' with {} accounts, {} transactions and {} budgets",
         DEMO_USERNAME,
         DEMO_PASSWORD,
         3,
-        seed_transactions.len()
+        seed_transactions.len() + 2,
+        seed_budgets.len()
     );
 
     Ok(())

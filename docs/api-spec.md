@@ -37,7 +37,7 @@ Source of truth for frontend types: `budget-helper-front/src/app/**/*.interface.
   | Deleting an account that still has transactions | 409 |
   | Any other DB or internal error | 500 |
 
-- **Ownership model**: accounts and transactions are scoped to the authenticated user
+- **Ownership model**: accounts, transactions and budgets are scoped to the authenticated user
   (`user_id` column). Reading/mutating another user's account or transaction by ID returns
   **404**, not 403 — existence isn't leaked. The one exception is creating/updating a
   *transaction* against an `account_id`/`account.id` that belongs to someone else, which
@@ -187,6 +187,49 @@ Errors:
 - `404` if the account doesn't exist or belongs to another user.
 - `409` if the account still has transactions referencing it (must delete/reassign those
   first).
+
+---
+
+## Budget — `/api/v1/budget`
+
+All routes require auth; results scoped to the caller. A budget is a monthly spending limit for
+one category, and is addressed by that category rather than by an ID — there is at most one per
+`(user, category)` (`UNIQUE KEY uq_budgets_user_category`), so neither `id` nor `user_id` appears
+on the wire. `INCOME` can never carry a budget.
+
+Frontend consumer: `budget-helper-front/src/app/modules/budget/api/budget-api.service.ts`.
+
+The `{category}` path segment is one of `"FOOD"` | `"BILL"` | `"SUBSCRIPTION"` | `"CLOTHING"`
+(the same uppercase strings as a transaction's `category`, case-sensitive). `"INCOME"` or any
+other value returns `400`.
+
+### `GET /api/v1/budget`
+
+Response `200 OK`, ordered by `category`:
+```json
+{
+  "budgetList": [
+    { "category": "FOOD", "monthlyLimit": "300.0000" }
+  ]
+}
+```
+`monthlyLimit` is a decimal string at the same `DECIMAL(19,4)` scale as transaction `amount`.
+Categories with no budget are simply absent (not returned with a null/zero limit).
+
+### `PUT /api/v1/budget/{category}`
+
+Upsert: creates the caller's budget for `category`, or replaces its limit if one exists.
+
+Request: `{ "monthlyLimit": "300.00" }`.
+Response `200 OK`: `{ "budget": { "category": "FOOD", "monthlyLimit": "300.0000" } }`.
+Errors: `400` if `category` is unknown or `INCOME`, or `monthlyLimit` is `<= 0`.
+
+### `DELETE /api/v1/budget/{category}`
+
+Response `204 No Content`, empty body.
+Errors:
+- `400` if `category` is unknown or `INCOME`.
+- `404` if the caller has no budget for that category.
 
 ---
 
